@@ -1044,8 +1044,9 @@ sub file {
         %stats = %{ $stats[0] };
     }
 
-    my $perms = S_IFPERMS & ( defined $stats{'mode'} ? int( $stats{'mode'} ) : 0666 );
-    $stats{'mode'} = ( $perms & ~umask ) | S_IFREG;
+    my $mode_explicit = defined $stats{'mode'};
+    my $perms = S_IFPERMS & ( $mode_explicit ? int( $stats{'mode'} ) : 0666 );
+    $stats{'mode'} = ( $mode_explicit ? $perms : ( $perms & ~umask ) ) | S_IFREG;
 
     # Check if directory for this file is an object we're mocking
     # If so, mark it now as having content
@@ -1397,6 +1398,10 @@ sub new_dir {
     my $dir = $class->dir( $dirname, @args );
     if ($mode) {
         __mkdir( $dirname, $mode );
+
+        # __mkdir applies umask (matching real mkdir behavior), but new_dir()
+        # is a constructor where the caller wants the exact mode requested.
+        $dir->{'mode'} = ( int($mode) & S_IFPERMS ) | S_IFDIR;
     }
     else {
         __mkdir($dirname);
