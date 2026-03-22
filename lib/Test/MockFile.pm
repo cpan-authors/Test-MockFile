@@ -66,6 +66,11 @@ my %_autovivify_dirs;
 # Auto-incrementing inode counter for unique inode assignment
 my $_next_inode = 1;
 
+# When set to 1, operations that create files or directories check parent
+# directory existence first (returning ENOENT if parent is missing).
+# Used by Test::MockFileSys for realistic filesystem semantics.
+our $_strict_fs_mode = 0;
+
 # From http://man7.org/linux/man-pages/man7/inode.7.html
 use constant S_IFMT    => 0170000;    # bit mask for the file type bit field
 use constant S_IFPERMS => 07777;      # bit mask for file perms.
@@ -423,7 +428,7 @@ Returning '1' skip all other rules and indicate an exception.
 
 =cut
 
-my @STRICT_RULES;
+our @STRICT_RULES;
 
 sub add_strict_rule {
     my ( $command_rule, $file_rule, $action ) = @_;
@@ -1492,6 +1497,21 @@ sub _new_nonexistent_file_mock {
     }, __PACKAGE__;
 }
 
+# Creates a non-existent directory mock (has_content=undef) with default attrs.
+# Used by _maybe_autovivify for intermediate directory creation.
+sub _new_nonexistent_dir_mock {
+    my ($abs_path) = @_;
+
+    my $perms = S_IFPERMS & 0777;
+    return bless {
+        _default_mock_attrs(),
+        'inode' => $_next_inode++,
+        'mode'  => ( $perms & ~umask ) | S_IFDIR,
+        'nlink' => 2,
+        'path'  => $abs_path,
+    }, __PACKAGE__;
+}
+
 sub new {
     my $class = shift @_;
 
@@ -1774,6 +1794,12 @@ sub _find_autovivify_parent {
         }
     }
 
+    # Check root as a last resort (the while loop never checks '/'
+    # because stripping the last component leaves an empty string)
+    if ( my $mock = $_autovivify_dirs{'/'} ) {
+        return $mock;
+    }
+
     return;
 }
 
@@ -1788,6 +1814,31 @@ sub _maybe_autovivify {
     return $files_being_mocked{$abs_path} if $files_being_mocked{$abs_path};
 
     my $parent = _find_autovivify_parent($abs_path) or return;
+
+    # Create intermediate directory mocks for path components between
+    # the autovivify parent and the target path.
+    my $parent_path = $parent->{'path'};
+    my $rel = $abs_path;
+    if ( $parent_path ne '/' ) {
+        $rel =~ s{^\Q$parent_path\E}{};
+    }
+    my @parts = grep { length $_ } split m{/}, $rel;
+
+    # Create intermediate dirs (all but the last component)
+    if ( @parts > 1 ) {
+        my $dir_so_far = $parent_path eq '/' ? '' : $parent_path;
+        for my $i ( 0 .. $#parts - 1 ) {
+            $dir_so_far .= '/' . $parts[$i];
+            next if $files_being_mocked{$dir_so_far};
+
+            my $dir_mock = _new_nonexistent_dir_mock($dir_so_far);
+            $files_being_mocked{$dir_so_far} = $dir_mock;
+            Scalar::Util::weaken( $files_being_mocked{$dir_so_far} );
+
+            $parent->{'_autovivified_children'} //= [];
+            push @{ $parent->{'_autovivified_children'} }, $dir_mock;
+        }
+    }
 
     # Create a non-existent file mock (contents=undef means "not there yet")
     my $mock = _new_nonexistent_file_mock($abs_path);
@@ -2522,6 +2573,26 @@ sub add_file_access_hook {
     return 1;
 }
 
+# When $_strict_fs_mode is active, check that the parent directory of
+# $abs_path is a mocked existing directory. Returns true if the parent
+# exists and is a directory, false otherwise.
+sub _strict_fs_parent_exists {
+    my ($abs_path) = @_;
+
+    return 1 unless $_strict_fs_mode;
+
+    # Root has no parent to check
+    ( my $parent = $abs_path ) =~ s{/[^/]+$}{};
+    return 1 unless length $parent;
+
+    my $parent_mock = $files_being_mocked{$parent};
+    return 0 unless $parent_mock;
+    return 0 unless $parent_mock->{'has_content'};
+    return 0 unless ( $parent_mock->{'mode'} & S_IFMT ) == S_IFDIR;
+
+    return 1;
+}
+
 =head2 clear_file_access_hooks
 
 Calling this subroutine will clear everything that was passed to
@@ -3009,6 +3080,15 @@ sub __open (*;$@) {
 
     # At this point we're mocking the file. Let's do it!
 
+    # Strict FS mode: creating a new file requires parent directory to exist
+    if ( !defined $mock_file->{'contents'} && grep { $mode eq $_ } qw/> >> +> +>>/ ) {
+        if ( !_strict_fs_parent_exists($abs_path) ) {
+            $! = ENOENT;
+            _maybe_throw_autodie( 'open', @_ );
+            return undef;
+        }
+    }
+
     # Directories cannot be opened as regular files.
     if ( $mock_file->is_dir() ) {
         $! = EISDIR;
@@ -3188,6 +3268,16 @@ sub __sysopen (*$$;$) {
         return undef;
     }
 
+    # Strict FS mode: O_CREAT on non-existent file requires parent directory
+    if ( $sysopen_mode & O_CREAT && !defined $mock_file->{'contents'} ) {
+        my $sysopen_abs = $abs_path // _abs_path_to_file( $_[1] );
+        if ( !_strict_fs_parent_exists($sysopen_abs) ) {
+            $! = ENOENT;
+            _maybe_throw_autodie( 'sysopen', @_ );
+            return undef;
+        }
+    }
+
     # O_CREAT — POSIX open(2): creating a new file sets atime, mtime, and ctime.
     if ( $sysopen_mode & O_CREAT && !defined $mock_file->{'contents'} ) {
         $mock_file->{'contents'} = '';
@@ -3301,6 +3391,10 @@ sub __opendir (*$) {
     }
 
     my $mock_dir = defined $abs_path ? $files_being_mocked{$abs_path} : undef;
+
+    if ( !$mock_dir && defined $abs_path ) {
+        $mock_dir = _maybe_autovivify($abs_path);
+    }
 
     if ( !$mock_dir ) {
         _real_file_access_hook( "opendir", \@_ );
@@ -3524,6 +3618,10 @@ sub __unlink (@) {
 
     foreach my $file (@files_to_unlink) {
         my $mock = _get_file_object($file);
+
+        if ( !$mock ) {
+            $mock = _maybe_autovivify( _abs_path_to_file($file) );
+        }
 
         if ( !$mock ) {
             _real_file_access_hook( "unlink", [$file] );
@@ -3765,6 +3863,13 @@ sub __mkdir (_;$) {
         return CORE::mkdir(@_);
     }
 
+    # Strict FS mode: mkdir requires parent directory to exist
+    if ( !$mock->exists && !_strict_fs_parent_exists( $mock->{'path'} ) ) {
+        $! = ENOENT;
+        _maybe_throw_autodie( 'mkdir', @_ );
+        return 0;
+    }
+
     # Permission check: mkdir needs write+execute on parent dir (GH #3)
     if ( defined $_mock_uid && !_check_parent_perms( $mock->{'path'}, 2 | 1 ) ) {
         $! = EACCES;
@@ -3812,6 +3917,10 @@ sub __rmdir (_) {
     }
 
     my $mock = _get_file_object($file);
+
+    if ( !$mock ) {
+        $mock = _maybe_autovivify( _abs_path_to_file($file) );
+    }
 
     if ( !$mock ) {
         _real_file_access_hook( 'rmdir', \@_ );
