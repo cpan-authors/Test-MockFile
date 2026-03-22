@@ -2938,6 +2938,9 @@ sub __open (*;$@) {
     if ( $arg_count != 3 ) {
         _real_file_access_hook( "open", \@_ );
         goto \&CORE::open if _goto_is_available();
+
+        ## no critic (TestingAndDebugging::ProhibitNoStrict)
+        no strict 'refs';    ## allow bareword filehandles on Perl < 5.16
         if ( @_ == 1 ) {
             return CORE::open( $_[0] );
         }
@@ -3008,6 +3011,9 @@ sub __open (*;$@) {
         or !defined $mock_file ) {
         _real_file_access_hook( "open", \@_ );
         goto \&CORE::open if _goto_is_available();
+
+        ## no critic (TestingAndDebugging::ProhibitNoStrict)
+        no strict 'refs';    ## allow bareword filehandles on Perl < 5.16
         if ( @_ == 1 ) {
             return CORE::open( $_[0] );
         }
@@ -3294,6 +3300,8 @@ sub __opendir (*$) {
 
         goto \&CORE::opendir if _goto_is_available();
 
+        ## no critic (TestingAndDebugging::ProhibitNoStrict)
+        no strict 'refs';    ## allow bareword filehandles on Perl < 5.16
         return CORE::opendir( $_[0], @_[ 1 .. $#_ ] );
     }
 
@@ -3317,6 +3325,9 @@ sub __opendir (*$) {
     if ( !$mock_dir ) {
         _real_file_access_hook( "opendir", \@_ );
         goto \&CORE::opendir if _goto_is_available();
+
+        ## no critic (TestingAndDebugging::ProhibitNoStrict)
+        no strict 'refs';    ## allow bareword filehandles on Perl < 5.16
         return CORE::opendir( $_[0], $_[1] );
     }
 
@@ -3366,6 +3377,9 @@ sub __readdir (*) {
     if ( !$mocked_dir ) {
         _real_file_access_hook( 'readdir', \@_ );
         goto \&CORE::readdir if _goto_is_available();
+
+        ## no critic (TestingAndDebugging::ProhibitNoStrict)
+        no strict 'refs';    ## allow bareword filehandles on Perl < 5.16
         return CORE::readdir( $_[0] );
     }
 
@@ -3411,6 +3425,9 @@ sub __telldir (*) {
     if ( !$mocked_dir ) {
         _real_file_access_hook( 'telldir', \@_ );
         goto \&CORE::telldir if _goto_is_available();
+
+        ## no critic (TestingAndDebugging::ProhibitNoStrict)
+        no strict 'refs';    ## allow bareword filehandles on Perl < 5.16
         return CORE::telldir($fh);
     }
 
@@ -3443,6 +3460,9 @@ sub __rewinddir (*) {
     if ( !$mocked_dir ) {
         _real_file_access_hook( 'rewinddir', \@_ );
         goto \&CORE::rewinddir if _goto_is_available();
+
+        ## no critic (TestingAndDebugging::ProhibitNoStrict)
+        no strict 'refs';    ## allow bareword filehandles on Perl < 5.16
         return CORE::rewinddir( $_[0] );
     }
 
@@ -3476,6 +3496,9 @@ sub __seekdir (*$) {
     if ( !$mocked_dir ) {
         _real_file_access_hook( 'seekdir', \@_ );
         goto \&CORE::seekdir if _goto_is_available();
+
+        ## no critic (TestingAndDebugging::ProhibitNoStrict)
+        no strict 'refs';    ## allow bareword filehandles on Perl < 5.16
         return CORE::seekdir( $fh, $goto );
     }
 
@@ -3512,6 +3535,9 @@ sub __closedir (*) {
     if ( !$mocked_dir ) {
         _real_file_access_hook( 'closedir', \@_ );
         goto \&CORE::closedir if _goto_is_available();
+
+        ## no critic (TestingAndDebugging::ProhibitNoStrict)
+        no strict 'refs';    ## allow bareword filehandles on Perl < 5.16
         return CORE::closedir($fh);
     }
 
