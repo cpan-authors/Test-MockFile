@@ -2185,7 +2185,7 @@ sub unlink {
     }
 
     if ( $self->is_dir ) {
-        if ( $] < 5.019 && ( $^O eq 'darwin' or $^O =~ m/bsd/i ) ) {
+        if ( $] < 5.019 && ( $^O eq 'darwin' or $^O =~ m/bsd/i or $^O eq 'solaris' ) ) {
             $! = EPERM;
         }
         else {
@@ -3282,6 +3282,7 @@ sub __opendir (*$) {
 
         goto \&CORE::opendir if _goto_is_available();
 
+        no strict 'refs';    ## no critic - bareword filehandles need symbolic refs
         return CORE::opendir( $_[0], @_[ 1 .. $#_ ] );
     }
 
@@ -3305,6 +3306,7 @@ sub __opendir (*$) {
     if ( !$mock_dir ) {
         _real_file_access_hook( "opendir", \@_ );
         goto \&CORE::opendir if _goto_is_available();
+        no strict 'refs';    ## no critic - bareword filehandles need symbolic refs
         return CORE::opendir( $_[0], $_[1] );
     }
 
@@ -3354,6 +3356,7 @@ sub __readdir (*) {
     if ( !$mocked_dir ) {
         _real_file_access_hook( 'readdir', \@_ );
         goto \&CORE::readdir if _goto_is_available();
+        no strict 'refs';    ## no critic - bareword filehandles need symbolic refs
         return CORE::readdir( $_[0] );
     }
 
@@ -3399,6 +3402,7 @@ sub __telldir (*) {
     if ( !$mocked_dir ) {
         _real_file_access_hook( 'telldir', \@_ );
         goto \&CORE::telldir if _goto_is_available();
+        no strict 'refs';    ## no critic - bareword filehandles need symbolic refs
         return CORE::telldir($fh);
     }
 
@@ -3431,6 +3435,7 @@ sub __rewinddir (*) {
     if ( !$mocked_dir ) {
         _real_file_access_hook( 'rewinddir', \@_ );
         goto \&CORE::rewinddir if _goto_is_available();
+        no strict 'refs';    ## no critic - bareword filehandles need symbolic refs
         return CORE::rewinddir( $_[0] );
     }
 
@@ -3464,6 +3469,7 @@ sub __seekdir (*$) {
     if ( !$mocked_dir ) {
         _real_file_access_hook( 'seekdir', \@_ );
         goto \&CORE::seekdir if _goto_is_available();
+        no strict 'refs';    ## no critic - bareword filehandles need symbolic refs
         return CORE::seekdir( $fh, $goto );
     }
 
@@ -3500,6 +3506,7 @@ sub __closedir (*) {
     if ( !$mocked_dir ) {
         _real_file_access_hook( 'closedir', \@_ );
         goto \&CORE::closedir if _goto_is_available();
+        no strict 'refs';    ## no critic - bareword filehandles need symbolic refs
         return CORE::closedir($fh);
     }
 
