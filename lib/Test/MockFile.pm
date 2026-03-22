@@ -7,6 +7,7 @@
 
 package Test::MockFile;
 
+use 5.016;
 use strict;
 use warnings;
 
@@ -976,21 +977,16 @@ sub _throw_autodie {
 # would overwrite our per-package overrides during compilation).
 # Wrapped in BEGIN+eval to avoid "Too late to run CHECK block"
 # warning when the module is loaded at runtime via require.
-# ${^GLOBAL_PHASE} requires Perl 5.14+; on older Perls we skip
-# the CHECK block entirely (import-time installation is sufficient
-# when autodie is loaded before Test::MockFile).
 BEGIN {
-    if ( $] >= 5.014 ) {
-        eval 'CHECK {
-            _install_package_overrides($_) for @_tmf_callers;
-            # If autodie was loaded during compilation (possibly after T::MF),
-            # mark all T::MF callers for the autodie fallback detection.
-            if ($INC{"autodie.pm"} || $INC{"Fatal.pm"}) {
-                $_autodie_callers{$_} = 1 for @_tmf_callers;
-            }
-        }'
-          unless ${^GLOBAL_PHASE} eq 'RUN';
-    }
+    eval 'CHECK {
+        _install_package_overrides($_) for @_tmf_callers;
+        # If autodie was loaded during compilation (possibly after T::MF),
+        # mark all T::MF callers for the autodie fallback detection.
+        if ($INC{"autodie.pm"} || $INC{"Fatal.pm"}) {
+            $_autodie_callers{$_} = 1 for @_tmf_callers;
+        }
+    }'
+      unless ${^GLOBAL_PHASE} eq 'RUN';
 }
 
 =head1 SUBROUTINES/METHODS
@@ -2368,11 +2364,6 @@ sub size {
     # producing a nonsensical ~20-byte value.
     return $self->{'blksize'} if $self->is_dir;
 
-    # length undef is 0 not undef in perl 5.10
-    if ( $] < 5.012 ) {
-        return undef unless $self->exists;
-    }
-
     return length $self->contents;
 }
 
@@ -2660,13 +2651,10 @@ B<opendir>'s related functions.
 
 =cut
 
-# goto doesn't work below 5.16
-#
 # goto messed up refcount between 5.22 and 5.26.
 # Broken in 7bdb4ff0943cf93297712faf504cdd425426e57f
 # Fixed  in https://rt.perl.org/Public/Bug/Display.html?id=115814
 sub _goto_is_available {
-    return 0 if $] < 5.015;
     return 1 if $] < 5.021;
     return 1 if $] > 5.027;
     return 0;
