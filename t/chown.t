@@ -316,5 +316,21 @@ subtest(
     }
 );
 
+subtest(
+    'stat returns numeric uid/gid after chown' => sub {
+        my $file = Test::MockFile->file( '/chown_numeric_test', 'content' );
+
+        chown( $>, int($)), '/chown_numeric_test' );
+
+        # Verify stat succeeds without "Item N is not numeric" from Overload::FileCheck.
+        # On Perl 5.10.1, the ternary in __chown could produce a string-only SV
+        # that Overload::FileCheck's XS validation rejects.
+        my @stat;
+        ok( lives { @stat = stat('/chown_numeric_test') }, 'stat after chown does not croak' );
+        is( $stat[4], $>,       'uid matches effective uid' );
+        is( $stat[5], int($)),  'gid matches effective gid' );
+    }
+);
+
 done_testing();
 exit;

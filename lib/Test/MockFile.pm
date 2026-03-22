@@ -2269,20 +2269,25 @@ Returns the stat of a mocked file (does not follow symlinks.)
 sub stat {
     my $self = shift;
 
+    # Force numeric context (0+) on every field so the SVs returned to
+    # Overload::FileCheck always carry SvIOK/SvNOK flags.  On Perl ≤ 5.10
+    # certain operations (ternary, hash copy) can produce string-only SVs
+    # that the XS validation in Overload::FileCheck rejects with
+    # "Item N is not numeric".
     return (
-        $self->{'dev'},        # stat[0]
-        $self->{'inode'},      # stat[1]
-        $self->{'mode'},       # stat[2]
-        $self->{'nlink'},      # stat[3]
-        $self->{'uid'},        # stat[4]
-        $self->{'gid'},        # stat[5]
-        $self->{'rdev'},       # stat[6]
-        $self->size,           # stat[7]
-        $self->{'atime'},      # stat[8]
-        $self->{'mtime'},      # stat[9]
-        $self->{'ctime'},      # stat[10]
-        $self->{'blksize'},    # stat[11]
-        $self->blocks,         # stat[12]
+        0 + $self->{'dev'},        # stat[0]
+        0 + $self->{'inode'},      # stat[1]
+        0 + $self->{'mode'},       # stat[2]
+        0 + $self->{'nlink'},      # stat[3]
+        0 + $self->{'uid'},        # stat[4]
+        0 + $self->{'gid'},        # stat[5]
+        0 + $self->{'rdev'},       # stat[6]
+        0 + $self->size,           # stat[7]
+        0 + $self->{'atime'},      # stat[8]
+        0 + $self->{'mtime'},      # stat[9]
+        0 + $self->{'ctime'},      # stat[10]
+        0 + $self->{'blksize'},    # stat[11]
+        0 + $self->blocks,         # stat[12]
     );
 }
 
