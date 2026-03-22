@@ -132,6 +132,7 @@ subtest(
         my $out = <$pipefh>;
         is( $out, "hello\n", 'Succesfully read from pipe with three-arg' );
 
+        1 while <$pipefh>;    # drain remaining data to avoid SIGPIPE on close
         ok( close($pipefh), 'Successfully closed pipe' );
 
         # No point testing $! because it will correctly be set to ESPIPE (29, illegal seek)
