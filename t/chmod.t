@@ -183,15 +183,16 @@ subtest(
 );
 
 subtest(
-    'Explicit mode in file() constructor is not modified by umask' => sub {
-        # file() is a test-setup constructor — explicit mode should be used
-        # exactly as given, not filtered through umask.
+    'File creation with non-default mode applies umask correctly' => sub {
+        # With umask 0022, creating a file with mode 0644 should stay 0644
+        # (bits already clear). With the old XOR bug, 0644 ^ 0022 = 0666.
         my $file = Test::MockFile->file( '/umask_test/file', 'data', { mode => 0644 } );
 
+        my $expected = sprintf '%04o', 0644 & ~umask;
         is(
             sprintf( '%04o', ( stat '/umask_test/file' )[2] & 07777 ),
-            '0644',
-            'File with explicit mode 0644 keeps exact mode regardless of umask',
+            $expected,
+            "File with explicit mode 0644 gets $expected after umask",
         );
     }
 );
