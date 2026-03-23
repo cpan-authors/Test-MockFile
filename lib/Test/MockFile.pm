@@ -2011,8 +2011,7 @@ sub contents {
             ref $new_contents
               and confess('File contents must be a simple string');
 
-            # XXX Why use $_[1] directly?
-            $self->{'contents'} = $_[1];
+            $self->{'contents'} = $new_contents;
         }
 
         return $self->{'contents'};
