@@ -556,7 +556,7 @@ exists on this method.
 
 sub BINMODE {
     my ($self) = @_;
-    return;
+    return 1;
 }
 
 =head2 OPEN
