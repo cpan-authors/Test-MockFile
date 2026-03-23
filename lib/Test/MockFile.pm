@@ -463,6 +463,26 @@ sub clear_strict_rules {
     return;
 }
 
+# Internal API for Test::MockFileSys — not part of the public interface.
+# Pushes a pre-built rule hashref onto @STRICT_RULES and returns it.
+sub _push_strict_rule {
+    my ( $class, $rule ) = @_;
+
+    ref $rule eq 'HASH'
+      or croak("_push_strict_rule requires a hashref");
+
+    push @STRICT_RULES, $rule;
+    return $rule;
+}
+
+# Internal API for Test::MockFileSys — removes a specific rule ref from @STRICT_RULES.
+sub _remove_strict_rule {
+    my ( $class, $rule ) = @_;
+
+    @STRICT_RULES = grep { $_ != $rule } @STRICT_RULES if $rule;
+    return;
+}
+
 =head2 add_strict_rule_for_filename( $file_rule, $action )
 
 Args: ($file_rule, $action)
