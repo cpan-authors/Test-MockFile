@@ -1422,7 +1422,6 @@ When creating mocked files or directories, we default their stats to:
             'mtime'     => $now,          # stat[9]
             'ctime'     => $now,          # stat[10]
             'blksize'   => 4096,          # stat[11]
-            'fileno'    => undef,         # fileno()
     } );
 
 You'll notice that mode, size, and blocks have been left out of this.
@@ -1464,7 +1463,6 @@ sub _default_mock_attrs {
         'mtime'                  => $now,      # stat[9]
         'ctime'                  => $now,      # stat[10]
         'blksize'                => 4096,      # stat[11]
-        'fileno'                 => undef,     # fileno()
         'tty'                    => 0,
         'readlink'               => '',
         'path'                   => undef,
@@ -1534,8 +1532,6 @@ sub new {
     if ( !$self->{'nlink'} ) {
         $self->{'nlink'} = ( $self->{'mode'} & S_IFMT ) == S_IFDIR ? 2 : 1;
     }
-
-    $self->{'fileno'} //= _unused_fileno();
 
     $files_being_mocked{$path} = $self;
     Scalar::Util::weaken( $files_being_mocked{$path} );
@@ -2279,10 +2275,6 @@ sub stat {
         $self->{'blksize'},    # stat[11]
         $self->blocks,         # stat[12]
     );
-}
-
-sub _unused_fileno {
-    return 900;                # TODO
 }
 
 =head2 readlink
