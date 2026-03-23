@@ -20,6 +20,8 @@ my $files_being_mocked;
     $files_being_mocked = \%Test::MockFile::files_being_mocked;
 }
 
+my $_next_fileno = 900;
+
 =head1 NAME
 
 Test::MockFile::FileHandle - Provides a class for L<Test::MockFile> to
@@ -75,6 +77,7 @@ sub TIEHANDLE {
         'read'   => $mode =~ m/r/ ? 1 : 0,
         'write'  => $mode =~ m/w/ ? 1 : 0,
         'append' => $mode =~ m/a/ ? 1 : 0,
+        'fileno' => $_next_fileno++,
     }, $class;
 
     # This ref count can't hold the object from getting released.
@@ -578,19 +581,15 @@ sub OPEN {
 
 =head2 FILENO
 
-B<UNIMPLEMENTED>: Open a ticket in
-L<github|https://github.com/cpanel/Test-MockFile/issues> if you need
-this feature.
-
-No L<perldoc
-documentation|http://perldoc.perl.org/perltie.html#Tying-FileHandles>
-exists on this method.
+Returns the unique file descriptor number assigned to this handle when
+it was opened. Each C<open()> call gets its own fileno, mirroring real
+kernel behavior.
 
 =cut
 
 sub FILENO {
     my ($self) = @_;
-    die 'fileno is purposefully unsupported';
+    return $self->{'fileno'};
 }
 
 =head2 SEEK
