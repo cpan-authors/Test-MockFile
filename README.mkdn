@@ -491,6 +491,10 @@ This will succeed:
 
 (Using strict-mode will not fix it, even though you should use it.)
 
+# AI POLICY
+
+This project uses AI tools to assist development. Humans review and approve every change before it is merged. See [AI\_POLICY.md](AI_POLICY.md) for details.
+
 # AUTHOR
 
 Todd Rinaldo, `<toddr at cpan.org>`
