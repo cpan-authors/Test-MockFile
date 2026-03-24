@@ -59,6 +59,13 @@ our %files_being_mocked;
 
 # Original Cwd functions saved before override
 my $_original_cwd_abs_path;
+my $_original_cwd_getcwd;
+my $_original_cwd_cwd;
+
+# Virtual CWD: set when chdir() targets a mocked directory.
+# undef means "use real cwd". When set, relative path resolution
+# and Cwd::getcwd/cwd use this instead of the real cwd.
+my $_virtual_cwd;
 
 # Tracks directories with autovivify enabled: path => mock object (weak ref)
 my %_autovivify_dirs;
@@ -1835,9 +1842,10 @@ sub _abs_path_to_file {
         $path =~ s{\Q$req_homedir\E}{$pw_homedir};
     }
 
-    # Make path absolute if relative
+    # Make path absolute if relative (use virtual cwd when active)
     if ( $path !~ m{^/}xms ) {
-        $path = Cwd::getcwd() . "/$path";
+        my $cwd = defined $_virtual_cwd ? $_virtual_cwd : Cwd::getcwd();
+        $path = $cwd . "/$path";
     }
 
     # Resolve path components: remove ".", resolve "..", collapse slashes
@@ -1864,7 +1872,8 @@ sub __cwd_abs_path {
 
     # Make absolute without collapsing .. (symlink-aware resolution does that)
     if ( $path !~ m{^/} ) {
-        $path = Cwd::getcwd() . "/$path";
+        my $cwd = defined $_virtual_cwd ? $_virtual_cwd : Cwd::getcwd();
+        $path = $cwd . "/$path";
     }
 
     my @remaining = grep { $_ ne '' && $_ ne '.' } split( m{/}, $path );
@@ -1922,6 +1931,13 @@ sub __cwd_abs_path {
     return $resolved || '/';
 }
 
+# Override for Cwd::getcwd / Cwd::cwd that returns the virtual CWD
+# when chdir() has been used on a mocked directory.
+sub __cwd_getcwd {
+    return $_virtual_cwd if defined $_virtual_cwd;
+    return $_original_cwd_getcwd->();
+}
+
 sub DESTROY {
     my ($self) = @_;
     ref $self or return;
@@ -1937,6 +1953,11 @@ sub DESTROY {
         my $rule = $self->{'_passthrough_rule'};
         @STRICT_RULES = grep { $_ != $rule } @STRICT_RULES if $rule;
         return;
+    }
+
+    # If this mock was the virtual CWD, clear it (GH #312)
+    if ( defined $_virtual_cwd && $_virtual_cwd eq $path ) {
+        $_virtual_cwd = undef;
     }
 
     # Clean up autovivify tracking
@@ -2646,7 +2667,16 @@ B<opendir>'s related functions.
 
 =item * closedir
 
+=item * chdir
+
 =back
+
+B<chdir> to a mocked directory sets a virtual current working directory.
+While active, relative path resolution and C<Cwd::getcwd>/C<Cwd::cwd>
+return the virtual path. A subsequent C<chdir> to a real (non-mocked)
+directory clears the virtual CWD and falls through to C<CORE::chdir>.
+The virtual CWD is also cleared when the mock object backing it goes
+out of scope.
 
 =cut
 
@@ -3866,6 +3896,84 @@ sub __rmdir (_) {
     return 1;
 }
 
+# chdir() override: intercepts chdir to mocked directories by tracking
+# a virtual CWD. Falls through to CORE::chdir for non-mocked paths.
+# When the virtual CWD is active, relative path resolution and
+# Cwd::getcwd/cwd use it instead of the real process cwd.
+sub __chdir (;$) {
+    my $dir;
+
+    if (@_) {
+        $dir = $_[0];
+    }
+    else {
+        # chdir() with no args goes to $ENV{HOME}
+        $dir = $ENV{HOME};
+        if ( !defined $dir ) {
+            $! = ENOENT;
+            _maybe_throw_autodie( 'chdir', @_ );
+            return 0;
+        }
+    }
+
+    my $abs = _abs_path_to_file($dir);
+    my $mock = $files_being_mocked{$abs};
+
+    if ( !$mock ) {
+        # Not mocked — try real chdir
+        _real_file_access_hook( 'chdir', \@_ );
+        my $ret = CORE::chdir($dir);
+        if ($ret) {
+            # Successful real chdir clears virtual cwd
+            $_virtual_cwd = undef;
+        }
+        return $ret;
+    }
+
+    # Must be an existing directory
+    if ( !$mock->exists ) {
+        $! = ENOENT;
+        _maybe_throw_autodie( 'chdir', @_ );
+        return 0;
+    }
+
+    if ( !$mock->is_dir ) {
+        $! = ENOTDIR;
+        _maybe_throw_autodie( 'chdir', @_ );
+        return 0;
+    }
+
+    # Permission check: chdir needs execute on the target dir
+    if ( defined $_mock_uid ) {
+        my $mode = $mock->{'mode'} & S_IFPERMS;
+        my $uid  = $_mock_uid;
+        my $gid  = $mock->{'gid'} // 0;
+        my $has_x;
+        if ( $uid == 0 ) {
+            $has_x = 1;    # root can always chdir
+        }
+        elsif ( $uid == ( $mock->{'uid'} // 0 ) ) {
+            $has_x = $mode & 0100;
+        }
+        elsif ( $gid == $gid ) {    # simplified group check
+            $has_x = $mode & 0010;
+        }
+        else {
+            $has_x = $mode & 0001;
+        }
+        if ( !$has_x ) {
+            $! = EACCES;
+            _maybe_throw_autodie( 'chdir', @_ );
+            return 0;
+        }
+    }
+
+    # Set virtual CWD to the mocked directory
+    $_virtual_cwd = $abs;
+
+    return 1;
+}
+
 sub __rename ($$) {
     my ( $old, $new ) = @_;
 
@@ -4347,6 +4455,7 @@ BEGIN {
 
     *CORE::GLOBAL::rename = \&__rename;
     *CORE::GLOBAL::rmdir  = \&__rmdir;
+    *CORE::GLOBAL::chdir  = \&__chdir;
     *CORE::GLOBAL::chown = \&__chown;
     *CORE::GLOBAL::chmod = \&__chmod;
     *CORE::GLOBAL::flock    = \&__flock;
@@ -4354,13 +4463,20 @@ BEGIN {
     *CORE::GLOBAL::truncate = \&__truncate;
 
     # Override Cwd functions to resolve mocked symlinks (GH #139)
+    # and support virtual CWD for chdir to mocked directories (GH #312)
     $_original_cwd_abs_path = \&Cwd::abs_path;
+    $_original_cwd_getcwd   = \&Cwd::getcwd;
+    $_original_cwd_cwd      = \&Cwd::cwd;
     {
         no warnings 'redefine';
         *Cwd::abs_path      = \&__cwd_abs_path;
         *Cwd::realpath      = \&__cwd_abs_path;
         *Cwd::fast_abs_path = \&__cwd_abs_path;
         *Cwd::fast_realpath = \&__cwd_abs_path;
+        *Cwd::getcwd        = \&__cwd_getcwd;
+        *Cwd::cwd           = \&__cwd_getcwd;
+        *Cwd::fastcwd       = \&__cwd_getcwd;
+        *Cwd::fast_cwd      = \&__cwd_getcwd;
     }
 
     # Override IO::File::open to intercept mocked files.
