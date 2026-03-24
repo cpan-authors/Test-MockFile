@@ -69,12 +69,13 @@ sub TIEHANDLE {
     length $file or die("No file name passed!");
 
     my $self = bless {
-        'file'   => $file,
-        'data'   => $files_being_mocked->{$file},
-        'tell'   => 0,
-        'read'   => $mode =~ m/r/ ? 1 : 0,
-        'write'  => $mode =~ m/w/ ? 1 : 0,
-        'append' => $mode =~ m/a/ ? 1 : 0,
+        'file'        => $file,
+        'data'        => $files_being_mocked->{$file},
+        'tell'        => 0,
+        'read'        => $mode =~ m/r/ ? 1 : 0,
+        'write'       => $mode =~ m/w/ ? 1 : 0,
+        'append'      => $mode =~ m/a/ ? 1 : 0,
+        'line_number' => 0,
     }, $class;
 
     # This ref count can't hold the object from getting released.
@@ -354,15 +355,22 @@ sub READLINE {
         my @all;
         my $line = _READLINE_ONE_LINE($self);
         while ( defined $line ) {
+            $self->{'line_number'}++;
             push @all, $line;
             $line = _READLINE_ONE_LINE($self);
         }
-        $self->_update_read_time() if @all;
+        if (@all) {
+            $. = $self->{'line_number'};
+            $self->_update_read_time();
+        }
         return @all;
     }
 
     my $line = _READLINE_ONE_LINE($self);
-    $self->_update_read_time() if defined $line;
+    if ( defined $line ) {
+        $. = ++$self->{'line_number'};
+        $self->_update_read_time();
+    }
     return $line;
 }
 
