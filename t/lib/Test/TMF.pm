@@ -18,12 +18,7 @@ use Fcntl qw/SEEK_CUR/;
 
 use Cwd 'abs_path';
 
-BEGIN {
-    # Test2::Harness::Util::IPC was renamed to Test2::Harness::IPC::Util
-    eval { require Test2::Harness::IPC::Util; Test2::Harness::IPC::Util->import('run_cmd'); 1 }
-      or eval { require Test2::Harness::Util::IPC; Test2::Harness::Util::IPC->import('run_cmd'); 1 }
-      or die "Could not load Test2::Harness::IPC::Util or Test2::Harness::Util::IPC: $@";
-}
+use Test2::Harness::IPC::Util qw/run_cmd/;
 
 use Exporter 'import';
 our @EXPORT = qw{
