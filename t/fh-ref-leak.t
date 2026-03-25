@@ -19,6 +19,13 @@ use Test2::Tools::Explain;
 use Scalar::Util qw(weaken);
 use Socket;
 
+use Overload::FileCheck ();
+
+# Overload::FileCheck < 0.014 caches filehandle refs in $_last_call_for,
+# preventing garbage collection. The fix (PR #25) landed in 0.014.
+skip_all "Overload::FileCheck >= 0.014 required (have $Overload::FileCheck::VERSION)"
+    if $Overload::FileCheck::VERSION < 0.014;
+
 use Test::MockFile qw< nostrict >;
 
 # Test 1: Filehandle passed to -f is not retained
