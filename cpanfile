@@ -20,5 +20,5 @@ on 'test' => sub {
     requires 'File::Temp'                => 0;
     requires 'File::Path'                => 0;
     requires 'File::Basename'            => 0;
-    requires 'Test2::Harness::IPC::Util' => 0;
+    requires 'Test2::Harness::Util::IPC' => 0;
 };
