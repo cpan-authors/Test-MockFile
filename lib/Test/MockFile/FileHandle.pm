@@ -83,6 +83,31 @@ sub TIEHANDLE {
     return $self;
 }
 
+# _contents_ref: returns a scalar ref to the effective contents for this handle.
+# After unlink, the mock's contents are undef but the handle may have a snapshot
+# saved by _preserve_contents_for_unlink (Unix semantics: open fds survive unlink).
+sub _contents_ref {
+    my ($self) = @_;
+    my $data = $self->{'data'};
+    if ( $data && defined $data->{'contents'} ) {
+        return \$data->{'contents'};
+    }
+    if ( exists $self->{'_orphaned_contents'} ) {
+        return \$self->{'_orphaned_contents'};
+    }
+    return undef;
+}
+
+# Called from Test::MockFile::unlink before clearing contents.
+# Snapshots the current contents so open handles can continue reading/writing.
+sub _preserve_contents_for_unlink {
+    my ($self) = @_;
+    my $data = $self->{'data'} or return;
+    if ( defined $data->{'contents'} ) {
+        $self->{'_orphaned_contents'} = $data->{'contents'};
+    }
+}
+
 =head2 PRINT
 
 This method will be triggered every time the tied handle is printed to
@@ -105,13 +130,12 @@ C<$!> to EBADF and return.
 sub _write_bytes {
     my ( $self, $output ) = @_;
 
-    my $data = $self->{'data'} or do {
+    my $contents = $self->_contents_ref() or do {
         $! = EBADF;
         return 0;
     };
 
-    my $tell     = $self->{'tell'};
-    my $contents = \$data->{'contents'};
+    my $tell = $self->{'tell'};
 
     if ( $self->{'append'} ) {
         # Append mode (>> / +>>): always write at end regardless of tell.
@@ -156,10 +180,10 @@ sub PRINT {
     # at the C level after PRINT returns), so this only covers explicit usage.
     $output .= $\ if defined $\;
 
-    my $data = $self->{'data'} or do {
+    if ( !$self->_contents_ref() ) {
         $! = EBADF;
         return 0;
-    };
+    }
 
     my $bytes = $self->_write_bytes($output);
     $self->_update_write_times() if $bytes;
@@ -269,8 +293,8 @@ read. undef is returned if tell is already at EOF.
 sub _READLINE_ONE_LINE {
     my ($self) = @_;
 
-    my $data = $self->{'data'} or return undef;
-    my $contents = $data->{'contents'};
+    my $cref = $self->_contents_ref() or return undef;
+    my $contents = $$cref;
     my $len      = length($contents);
     my $tell     = $self->{'tell'};
 
@@ -385,8 +409,8 @@ sub GETC {
 
     return undef if $self->EOF;
 
-    my $data = $self->{'data'} or return undef;
-    my $char = substr( $data->{'contents'}, $self->{'tell'}, 1 );
+    my $cref = $self->_contents_ref() or return undef;
+    my $char = substr( $$cref, $self->{'tell'}, 1 );
     $self->{'tell'}++;
     $self->_update_read_time();
 
@@ -429,12 +453,12 @@ sub READ {
     # If the caller's buffer is undef, we need to make it a string of 0 length to start out with.
     $_[1] = '' if !defined $_[1];
 
-    my $data = $self->{'data'} or do {
+    my $cref = $self->_contents_ref() or do {
         $! = EBADF;
         return 0;
     };
 
-    my $contents_len = length $data->{'contents'};
+    my $contents_len = length $$cref;
     my $buf_len      = length $_[1];
 
     $offset //= 0;
@@ -448,7 +472,7 @@ sub READ {
 
     my $read_len = ( $contents_len - $tell < $len ) ? $contents_len - $tell : $len;
 
-    substr( $_[1], $offset ) = substr( $data->{'contents'}, $tell, $read_len );
+    substr( $_[1], $offset ) = substr( $$cref, $tell, $read_len );
 
     $self->{'tell'} += $read_len;
     $self->_update_read_time() if $read_len;
@@ -532,13 +556,13 @@ C<$self-E<gt>{'tell'}>, we determine if we're at EOF.
 sub EOF {
     my ($self) = @_;
 
-    my $data = $self->{'data'} or return 1;
+    my $cref = $self->_contents_ref() or return 1;
 
     if ( !$self->{'read'} ) {
         my $path = $self->{'file'} // 'unknown';
         CORE::warn("Filehandle $path opened only for output");
     }
-    return $self->{'tell'} >= length $data->{'contents'};
+    return $self->{'tell'} >= length $$cref;
 }
 
 =head2 BINMODE
@@ -620,12 +644,12 @@ exists on this method.
 sub SEEK {
     my ( $self, $pos, $whence ) = @_;
 
-    my $data = $self->{'data'} or do {
+    my $cref = $self->_contents_ref() or do {
         $! = EBADF;
         return 0;
     };
 
-    my $file_size = length $data->{'contents'};
+    my $file_size = length $$cref;
 
     my $new_pos;
 
