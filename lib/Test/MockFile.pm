@@ -38,6 +38,14 @@ use Symbol;
 
 use Overload::FileCheck '-from-stat' => \&_mock_stat, q{:check};
 
+# Override -T and -B handlers with content-aware versions.
+# The -from-stat mode can only derive results from stat arrays, but -T/-B
+# need to inspect file contents. We replace the generic handlers with
+# custom ones that read the mock's contents field.
+Overload::FileCheck::unmock_file_check( 'T', 'B' );
+Overload::FileCheck::mock_file_check( '-T' => sub { _mock_fttext(@_) } );
+Overload::FileCheck::mock_file_check( '-B' => sub { _mock_ftbinary(@_) } );
+
 use Errno qw/EPERM EACCES ENOENT EBADF ELOOP ENOTEMPTY EEXIST EISDIR ENOTDIR EINVAL EXDEV/;
 
 use constant FOLLOW_LINK_MAX_DEPTH => 10;
@@ -1603,6 +1611,119 @@ sub _mock_stat {
 
     # Make sure the file size is correct in the stats before returning its contents.
     return [ $file_data->stat ];
+}
+
+# Resolve a file path to its mock object, following symlinks.
+# Returns ($file_data, $error_return) — if $error_return is defined,
+# the caller should return it immediately.
+sub _resolve_mock_for_ftcheck {
+    my ($file_or_fh) = @_;
+
+    if ( !defined $file_or_fh || !length $file_or_fh ) {
+        return ( undef, FALLBACK_TO_REAL_OP() );
+    }
+
+    my $file = _find_file_or_fh( $file_or_fh, 1 );    # follow symlinks
+
+    # Broken symlink
+    if ( defined $file && defined BROKEN_SYMLINK && $file eq BROKEN_SYMLINK ) {
+        $! = ENOENT;
+        return ( undef, CHECK_IS_FALSE );
+    }
+
+    # Circular symlink
+    if ( defined $file && defined CIRCULAR_SYMLINK && $file eq CIRCULAR_SYMLINK ) {
+        $! = ELOOP;
+        return ( undef, CHECK_IS_FALSE );
+    }
+
+    if ( !defined $file || !length $file ) {
+        return ( undef, FALLBACK_TO_REAL_OP() );
+    }
+
+    my $file_data = _get_file_object($file);
+    if ( !$file_data ) {
+        $file_data = _maybe_autovivify($file);
+    }
+    if ( !$file_data ) {
+        return ( undef, FALLBACK_TO_REAL_OP() );
+    }
+
+    if ( !$file_data->exists() ) {
+        $! = ENOENT;
+        return ( undef, CHECK_IS_FALSE );
+    }
+
+    return ( $file_data, undef );
+}
+
+# Returns true if the data looks like text (Perl's -T heuristic).
+# Examines up to the first 512 bytes for NUL characters and
+# the proportion of non-text control characters.
+sub _is_text_data {
+    my ($data) = @_;
+
+    return 1 if !defined $data || !length $data;    # empty → text (and binary)
+
+    my $len = length $data;
+    $len = 512 if $len > 512;
+    my $sample = substr( $data, 0, $len );
+
+    # NUL byte → binary
+    return 0 if index( $sample, "\0" ) >= 0;
+
+    # Count "odd" bytes: control chars (0-8, 14-26, 28-31) and high-bit (128-255)
+    my $odd = 0;
+    for my $byte ( unpack( 'C*', $sample ) ) {
+        if (   ( $byte <= 8 )
+            || ( $byte >= 14 && $byte <= 26 )
+            || ( $byte >= 28 && $byte <= 31 )
+            || ( $byte >= 128 ) )
+        {
+            $odd++;
+        }
+    }
+
+    # More than 30% odd → binary
+    return ( $odd * 100 / $len ) <= 30 ? 1 : 0;
+}
+
+# Custom handler for -T (file is ASCII/UTF-8 text, heuristic).
+sub _mock_fttext {
+    my ($file_or_fh) = @_;
+
+    my ( $file_data, $early_return ) = _resolve_mock_for_ftcheck($file_or_fh);
+    return $early_return if defined $early_return;
+
+    # Directories: -T returns true in Perl (tries to read dir as file, sees binary-ish data)
+    # but Perl's behavior on dirs is platform-dependent. Follow Perl's common behavior:
+    # on most systems, -T on a directory returns false.
+    return CHECK_IS_FALSE if $file_data->is_dir();
+
+    my $contents = $file_data->contents();
+
+    # Empty file: both -T and -B return true
+    return CHECK_IS_TRUE if !defined $contents || !length $contents;
+
+    return _is_text_data($contents) ? CHECK_IS_TRUE : CHECK_IS_FALSE;
+}
+
+# Custom handler for -B (file is "binary", opposite of -T).
+sub _mock_ftbinary {
+    my ($file_or_fh) = @_;
+
+    my ( $file_data, $early_return ) = _resolve_mock_for_ftcheck($file_or_fh);
+    return $early_return if defined $early_return;
+
+    # Directories: -B returns true in Perl
+    return CHECK_IS_TRUE if $file_data->is_dir();
+
+    my $contents = $file_data->contents();
+
+    # Empty file: both -T and -B return true
+    return CHECK_IS_TRUE if !defined $contents || !length $contents;
+
+    return _is_text_data($contents) ? CHECK_IS_FALSE : CHECK_IS_TRUE;
 }
 
 sub _is_path_mocked {
