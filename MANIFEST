@@ -21,6 +21,7 @@ t/autovivify.t
 t/blocks.t
 t/chmod-chown-passthrough.t
 t/chmod-filetemp.t
+t/chdir.t
 t/chmod.t
 t/chown-chmod-nostrict.t
 t/chown.t
