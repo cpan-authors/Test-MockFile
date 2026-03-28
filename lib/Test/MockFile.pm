@@ -2318,6 +2318,16 @@ sub unlink {
         $self->{'readlink'} = undef;
     }
     else {
+        # Unix semantics: open file descriptors survive unlink.
+        # Snapshot contents into each open FileHandle before clearing.
+        if ( $self->{'fhs'} && defined $self->{'contents'} ) {
+            for my $fh ( grep { defined $_ } @{ $self->{'fhs'} } ) {
+                my $tied = tied(*$fh);
+                if ( $tied && $tied->can('_preserve_contents_for_unlink') ) {
+                    $tied->_preserve_contents_for_unlink();
+                }
+            }
+        }
         $self->{'has_content'} = undef;
         $self->{'contents'}    = undef;
     }
