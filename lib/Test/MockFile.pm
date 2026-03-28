@@ -3308,8 +3308,13 @@ sub __sysopen (*$$;$) {
         return undef;
     }
 
+    # Track whether O_CREAT will create a new file (before contents is initialized).
+    # This flag is used later in the permission check to decide between file-level
+    # and parent-dir-level permission enforcement.
+    my $is_new = !defined $mock_file->{'contents'};
+
     # O_CREAT — POSIX open(2): creating a new file sets atime, mtime, and ctime.
-    if ( $sysopen_mode & O_CREAT && !defined $mock_file->{'contents'} ) {
+    if ( $sysopen_mode & O_CREAT && $is_new ) {
         $mock_file->{'contents'} = '';
         my $now = time;
         $mock_file->{'atime'} = $now;
@@ -3354,20 +3359,22 @@ sub __sysopen (*$$;$) {
 
     # Permission check (GH #3)
     if ( defined $_mock_uid ) {
-        if ( defined $mock_file->{'contents'} ) {
+        if ( !$is_new ) {
+            # Existing file: check file permissions based on requested r/w mode
             my $need = 0;
             $need |= 4 if $rw =~ /r/;
             $need |= 2 if $rw =~ /w/;
             if ( !_check_perms( $mock_file, $need ) ) {
                 $! = EACCES;
-                _throw_autodie( 'sysopen', @_ ) if _caller_has_autodie_for('sysopen');
+                _maybe_throw_autodie( 'sysopen', @_ );
                 return undef;
             }
         }
         elsif ( $rw =~ /w/ ) {
+            # Creating new file: check parent dir write+execute permissions
             if ( !_check_parent_perms( $mock_file->{'path'}, 2 | 1 ) ) {
                 $! = EACCES;
-                _throw_autodie( 'sysopen', @_ ) if _caller_has_autodie_for('sysopen');
+                _maybe_throw_autodie( 'sysopen', @_ );
                 return undef;
             }
         }
