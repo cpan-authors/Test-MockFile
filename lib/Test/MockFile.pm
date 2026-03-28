@@ -3111,8 +3111,20 @@ sub __open (*;$@) {
     $mode =~ s/(:.+$)//;
     my $encoding_mode = $1;
 
-    # TODO: We don't yet support |- or -|
-    # TODO: We don't yet support modes outside of > < >> +< +> +>>
+    # Pipe modes (|- and -|) are not supported for mocked files.
+    # Warn (or die in strict mode) so the user knows mock is being bypassed.
+    if ( defined $mock_file && ( $mode eq '|-' || $mode eq '-|' ) ) {
+        my $abs = $mock_file->{'path'} || $file;
+        my $msg = "open() with pipe mode '$mode' on mocked file '$abs' is not supported by Test::MockFile; falling through to CORE::open";
+        if ( is_strict_mode() && !( $STRICT_MODE_STATUS & STRICT_MODE_WARN ) ) {
+            confess($msg);
+        }
+        else {
+            carp($msg);
+        }
+    }
+
+    # We don't yet support modes outside of > < >> +< +> +>>
     # We just pass through to open if we're not mocking the file right now.
     if (   ( $mode eq '|-' || $mode eq '-|' )
         or !grep { $_ eq $mode } qw/> < >> +< +> +>>/
