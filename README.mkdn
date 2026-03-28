@@ -1,4 +1,4 @@
-[![linux](https://github.com/cpanel/Test-MockFile/actions/workflows/linux.yml/badge.svg)](https://github.com/cpanel/Test-MockFile/actions/workflows/linux.yml)
+[\![linux](https://github.com/cpanel/Test-MockFile/actions/workflows/linux.yml/badge.svg)](https://github.com/cpanel/Test-MockFile/actions/workflows/linux.yml)
 
 # NAME
 
@@ -7,7 +7,7 @@ files without touching the file system.
 
 # VERSION
 
-Version 0.029
+Version 0.038
 
 # SYNOPSIS
 
@@ -29,6 +29,17 @@ throw a die when files are accessed during your tests!
 
     # non-strict mode
     use Test::MockFile qw< nostrict >;
+
+    # trace mode - logs unmocked file accesses to STDERR
+    use Test::MockFile qw< :trace >;
+
+    # warn mode (like strict, but warns instead of dying)
+    use Test::MockFile qw< warnstrict >;
+
+    # Load with one or more plugins
+
+    use Test::MockFile plugin => 'FileTemp';
+    use Test::MockFile plugin => [ 'FileTemp', ... ];
 
     # Be sure to assign the output of mocks, they disappear when they go out of scope
     my $foobar = Test::MockFile->file( "/foo/bar", "contents\ngo\nhere" );
@@ -70,11 +81,23 @@ throw a die when files are accessed during your tests!
     # same as above
     say "Contents of /foo/bar directory (using glob()): " . join "\n", @matches;
 
+    # Create a symlink using the builtin
+    my $target_mock = Test::MockFile->file('/foo/target', "data");
+    my $link_mock   = Test::MockFile->file('/foo/mylink');  # start as non-existent
+    symlink('/foo/target', '/foo/mylink');                   # now it's a symlink
+    say 'is a symlink!' if -l '/foo/mylink';
+
+    # Create a hard link using the builtin
+    my $orig_mock = Test::MockFile->file('/foo/original', "shared data");
+    my $hard_mock = Test::MockFile->file('/foo/hardlink');
+    link('/foo/original', '/foo/hardlink');
+    say 'hard link exists!' if -f '/foo/hardlink';
+
 # IMPORT
 
 When the module is loaded with no parameters, strict mode is turned on.
-Any file checks, `open`, `sysopen`, `opendir`, `stat`, or `lstat`
-will throw a die.
+Any file checks, `open`, `sysopen`, `opendir`, `stat`, `lstat`,
+`symlink`, or `link` will throw a die.
 
 For example:
 
@@ -97,6 +120,36 @@ If we want to load the module without strict mode:
 
     use Test::MockFile qw< nostrict >;
 
+### Trace mode
+
+Trace mode logs all unmocked file access operations to STDERR. This is
+useful during development to discover which files your code touches, so
+you know what to mock.
+
+    use Test::MockFile qw< :trace >;
+
+Each unmocked file operation produces a line like:
+
+    [trace] open('/etc/hosts') at t/mytest.t line 42
+
+Trace mode can be combined with nostrict to log all accesses without
+dying:
+
+    use Test::MockFile qw< :trace :nostrict >;
+
+Tags may also be used without the colon prefix for backwards
+compatibility:
+
+    use Test::MockFile qw< trace nostrict >;
+
+If we want to be warned about unmocked file access without dying:
+
+    use Test::MockFile qw< warnstrict >;
+
+This is useful when migrating an existing test suite to strict mode.
+It allows you to discover all unmocked file accesses at once,
+rather than fixing them one at a time.
+
 Relative paths are not supported:
 
     use Test::MockFile;
@@ -106,16 +159,175 @@ Relative paths are not supported:
     $file = Test::MockFile->file( '/bar',        '...' ); # ok     - absolute path
     $file = Test::MockFile->file( 'bar', '...' );         # ok     - current dir
 
+## authorized\_strict\_mode\_for\_package( $pkg )
+
+Add a package namespace to the list of authorize namespaces.
+
+    authorized_strict_mode_for_package( 'Your::Package' );
+
 ## file\_arg\_position\_for\_command
 
 Args: ($command)
 
-Provides a hint with the position of the argument most likely
-holding the file name for the current `$command` call.
+Provides a hint with the position of the argument most likely holding
+the file name for the current `$command` call.
 
-This is used internaly to provide better error messages.
-This can be used when plugging hooks to know what's the filename
-we currently try to access.
+This is used internaly to provide better error messages. This can be
+used when plugging hooks to know what's the filename we currently try
+to access.
+
+## add\_strict\_rule( $command\_rule, $file\_rule, $action )
+
+Args: ($command\_rule, $file\_rule, $action)
+
+Add a custom rule to validate strictness mode. This is the fundation to
+add strict rules. You should use it, when none of the other helper to
+add rules work for you.
+
+- `$command_rule` a string or regexp or list of any to indicate
+which command to match
+- `$file_rule` a string or regexp or undef or list of any to indicate
+which files your rules apply to.
+- `$action` a CODE ref or scalar to handle the exception.
+Returning '1' skip all other rules and indicate an exception.
+
+    # Check open() on /this/file
+    add_strict_rule( 'open', '/this/file', sub { ... } );
+
+    # always bypass the strict rule
+    add_strict_rule( 'open', '/this/file', 1 );
+
+    # all available options
+    add_strict_rule( 'open', '/this/file', sub {
+        my ($context) = @_;
+
+        return;   # Skip this rule and continue from the next one
+        return 0; # Strict violation, stop testing rules and die
+        return 1; # Strict passing, stop testing rules
+    } );
+
+    # Disallow open(), close() on everything in /tmp/
+    add_strict_rule(
+        [ qw< open close > ],
+        qr{^/tmp}xms,
+        0,
+    );
+
+    # Disallow open(), close() on everything (ignore filenames)
+    # Use add_strict_rule_for_command() instead!
+    add_strict_rule(
+        [ qw< open close > ],
+        undef,
+        0,
+    );
+
+## clear\_strict\_rules()
+
+Args: none
+
+Clear all previously defined rules. (Mainly used for testing purpose)
+
+## add\_strict\_rule\_for\_filename( $file\_rule, $action )
+
+Args: ($file\_rule, $action)
+
+Prefer using that helper when trying to add strict rules targeting
+files.
+
+Apply a rule to one or more files.
+
+    add_strict_rule_for_filename( '/that/file' => sub { ... } );
+
+    add_strict_rule_for_filename( [ qw{list of files} ] => sub { ... } );
+
+    add_strict_rule_for_filename( qr{*\.t$} => sub { ... } );
+
+    add_strict_rule_for_filename( [ $dir, qr{^${dir}/} ] => 1 );
+
+## add\_strict\_rule\_for\_command( $command\_rule, $action )
+
+Args: ($command\_rule, $action)
+
+Prefer using that helper when trying to add strict rules targeting
+specici commands.
+
+Apply a rule to one or more files.
+
+    add_strict_rule_for_command( 'open' => sub { ... } );
+
+    add_strict_rule_for_command( [ qw{open readdir} ] => sub { ... } );
+
+    add_strict_rule_for_command( qr{open.*} => sub { ... } );
+
+    Test::MockFile::add_strict_rule_for_command(
+        [qw{ readdir closedir readlink }],
+        sub {
+            my ($ctx) = @_;
+            my $command = $ctx->{command} // 'unknown';
+
+            warn( "Ignoring strict mode violation for $command" );
+            return 1;
+        }
+    );
+
+## add\_strict\_rule\_generic( $action )
+
+Args: ($action)
+
+Prefer using that helper when adding a rule which is global and does
+not apply to a specific command or file.
+
+Apply a rule to one or more files.
+
+    add_strict_rule_generic( sub { ... } );
+
+    add_strict_rule_generic( sub  {
+        my ($ctx) = @_;
+
+        my $filename = $ctx->{filename};
+
+        return unless defined $filename;
+
+        return 1 if UNIVERSAL::isa( $filename, 'GLOB' );
+
+        return;
+    } );
+
+## is\_strict\_mode
+
+Boolean helper to determine if strict mode is currently enabled.
+
+## is\_warn\_mode
+
+Boolean helper to determine if warn mode is currently enabled.
+When warn mode is active, strict mode violations produce warnings
+instead of fatal errors.
+
+## set\_user
+
+Args: ($uid, @gids)
+
+Sets a mock user identity for permission checking. When set, all
+mocked file operations will check Unix permissions (owner/group/other)
+against this identity instead of the real process credentials.
+
+The first gid in `@gids` is the primary group. If no gids are provided,
+the primary group defaults to 0.
+
+    Test::MockFile->set_user(1000, 1000);  # uid=1000, gid=1000
+    my $f = Test::MockFile->file('/foo', 'bar', { mode => 0600, uid => 0 });
+    open(my $fh, '<', '/foo') or die;  # dies: EACCES (not owner)
+
+    Test::MockFile->set_user(0, 0);  # root can read anything
+    open(my $fh, '<', '/foo') or die;  # succeeds
+
+## clear\_user
+
+Clears the mock user identity, disabling permission checks.
+File operations will succeed regardless of mode bits (the default
+behavior).
+
+    Test::MockFile->clear_user();
 
 # SUBROUTINES/METHODS
 
@@ -149,6 +361,41 @@ etc.
 If `file_on_disk` isn't present, then this will die.
 
 See ["Mock Stats"](#mock-stats) for what goes into the stats hashref.
+
+## file\_passthrough
+
+Args: `($file_or_glob)`
+
+Registers a path (or shell glob pattern) with Test::MockFile but delegates
+**all** file operations (`stat`, `open`, `-f`, etc.) to the real filesystem.
+The path is not actually mocked: it is simply allowed through strict mode so
+that XS-based modules (e.g. [DBD::SQLite](https://metacpan.org/pod/DBD%3A%3ASQLite), [DBI](https://metacpan.org/pod/DBI)) that perform C-level I/O
+can create and use the file while Perl-level checks remain consistent.
+
+A glob pattern (containing `*`, `?`  or `[``]`) matches any path that fits
+the pattern.  This is useful for modules like [DBD::SQLite](https://metacpan.org/pod/DBD%3A%3ASQLite) that create
+auxiliary files alongside the main database (e.g. `.db-wal`, `.db-shm`):
+
+    use Test::MockFile;    # strict mode by default
+    use DBI;
+
+    # Allow the SQLite database and any auxiliary files it creates.
+    my $mock = Test::MockFile->file_passthrough('/tmp/test.db*');
+    my $dbh  = DBI->connect("dbi:SQLite:dbname=/tmp/test.db", "", "");
+
+    ok $dbh->ping,        'ping works';
+    ok -f '/tmp/test.db', 'file exists on disk';
+
+For a single, exact path:
+
+    my $mock = Test::MockFile->file_passthrough('/tmp/test.db');
+
+When the returned object goes out of scope, the strict-mode rule is
+removed but the real file is **not** deleted.  Clean up the file
+yourself if needed:
+
+    undef $mock;
+    unlink '/tmp/test.db';
 
 ## symlink
 
@@ -222,29 +469,71 @@ helper method for it in the future.)
     $d = Test::MockFile->dir('/foo');
     mkdir $d, 0755;                   # ok
 
+### autovivify
+
+When `autovivify` is enabled, any file operation (open, stat, rename,
+mkdir, etc.) on a path under the directory will automatically create a
+mocked file entry. This supports the common pattern of writing to a temp
+file and renaming it into place.
+
+    my $dir = Test::MockFile->new_dir( '/data', { 'autovivify' => 1 } );
+
+    # Files are auto-mocked when accessed -- no need to declare them
+    open my $fh, '>', '/data/.tmp.cfg' or die;
+    print $fh $config;
+    close $fh;
+    rename '/data/.tmp.cfg', '/data/config.ini';
+
+    -e '/data/config.ini';   # true
+
+Auto-vivified files are tied to the parent directory's lifetime: when
+the directory mock goes out of scope, all auto-vivified children are
+cleaned up.
+
+## new\_dir
+
+    # short form
+    $new_dir = Test::MockFile->new_dir( '/path' );
+    $new_dir = Test::MockFile->new_dir( '/path', { 'mode' => 0755 } );
+
+    # longer form 1
+    $dir = Test::MockFile->dir('/path');
+    mkdir $dir->path(), 0755;
+
+    # longer form 2
+    $dir = Test::MockFile->dir('/path');
+    mkdir $dir->path();
+    chmod $dir->path();
+
+This creates a new directory with an optional mode. This is a
+short-hand that might be removed in the future when a stable, new
+interface is introduced.
+
 ## Mock Stats
 
 When creating mocked files or directories, we default their stats to:
 
     my $attrs = Test::MockFile->file( $file, $contents, {
-            'dev'       => 0,        # stat[0]
-            'inode'     => 0,        # stat[1]
-            'mode'      => $mode,    # stat[2]
-            'nlink'     => 0,        # stat[3]
-            'uid'       => int $>,   # stat[4]
-            'gid'       => int $),   # stat[5]
-            'rdev'      => 0,        # stat[6]
-            'atime'     => $now,     # stat[8]
-            'mtime'     => $now,     # stat[9]
-            'ctime'     => $now,     # stat[10]
-            'blksize'   => 4096,     # stat[11]
-            'fileno'    => undef,    # fileno()
+            'dev'       => 0,            # stat[0]
+            'inode'     => $next_inode,   # stat[1] - auto-assigned unique value
+            'mode'      => $mode,         # stat[2]
+            'nlink'     => 1,             # stat[3] - 1 for files/symlinks, 2 for dirs
+            'uid'       => int $>,        # stat[4]
+            'gid'       => int $),        # stat[5]
+            'rdev'      => 0,             # stat[6]
+            'atime'     => $now,          # stat[8]
+            'mtime'     => $now,          # stat[9]
+            'ctime'     => $now,          # stat[10]
+            'blksize'   => 4096,          # stat[11]
+            'fileno'    => undef,         # fileno()
     } );
 
 You'll notice that mode, size, and blocks have been left out of this.
 Mode is set to 666 (for files) or 777 (for directories), xored against
 the current umask. Size and blocks are calculated based on the size of
-'contents' a.k.a. the fake file.
+'contents' a.k.a. the fake file. Each mock is assigned a unique inode
+number, and nlink defaults to 1 for files and symlinks, 2 for
+directories.
 
 When you want to override one of the defaults, all you need to do is
 specify that when you declare the file or directory. The rest will
@@ -270,6 +559,52 @@ set directory contents with calling the `file()` method described
 above.
 
 Symlinks have no contents.
+
+## read
+
+Returns the contents of a mocked file. Dies if called on a directory
+or symlink.
+
+In scalar context, returns the entire file contents as a single string.
+In list context, splits the contents into lines using `$/` as the
+input record separator (preserving the separator in each element),
+consistent with Perl's `readline` behavior.
+
+Returns `undef` in scalar context (or an empty list in list context)
+if the file does not currently exist.
+
+    my $bar  = Test::MockFile->file( '/foo/bar', "line1\nline2\n" );
+    my $text = $bar->read;     # "line1\nline2\n"
+    my @lines = $bar->read;    # ( "line1\n", "line2\n" )
+
+## write
+
+Sets the contents of a mocked file. Dies if called on a directory
+or symlink.
+
+Multiple arguments are concatenated. If the file does not currently
+exist, calling `write` brings it into existence.
+
+Returns the mock object for chaining.
+
+    my $bar = Test::MockFile->file( '/foo/bar' );  # non-existent file
+    $bar->write("hello world");                     # now exists
+    $bar->write("line1\n", "line2\n");              # concatenated
+
+## append
+
+Appends to the contents of a mocked file. Dies if called on a
+directory or symlink.
+
+Multiple arguments are concatenated before appending. If the file does
+not currently exist, calling `append` brings it into existence (as if
+writing to an empty file).
+
+Returns the mock object for chaining.
+
+    my $bar = Test::MockFile->file( '/foo/bar', "first\n" );
+    $bar->append("second\n");                        # "first\nsecond\n"
+    $bar->append("third\n", "fourth\n");             # concatenated
 
 ## filename
 
@@ -432,7 +767,7 @@ file handles were never setup for tie so we have to override all of
 - rewinddir
 - closedir
 
-# CAEATS AND LIMITATIONS
+# CAVEATS AND LIMITATIONS
 
 ## DEBUGGER UNDER STRICT MODE
 
@@ -448,16 +783,27 @@ get mad.
     # Or alternatively, add this to the top of your code:
     use Term::ReadLine
 
+## HARD LINKS
+
+The `link()` override copies file contents and metadata from the
+source to the destination mock. However, unlike real hard links,
+writes to one file will **not** be reflected in the other. The
+`nlink` count is incremented on both files.
+
+The destination path must be a pre-declared mock (via `file()` or
+`dir()`). Attempting to `link()` a mocked source to an unmocked
+destination will fail with `EXDEV`.
+
 ## FILENO IS UNSUPPORTED
 
 Filehandles can provide the file descriptor (in number) using the
 `fileno` keyword but this is purposefully unsupported in
 [Test::MockFile](https://metacpan.org/pod/Test%3A%3AMockFile).
 
-The reaosn is that by mocking a file, we're creating an alternative
+The reason is that by mocking a file, we're creating an alternative
 file system. Returning a `fileno` (file descriptor number) would
 require creating file descriptor numbers that would possibly conflict
-with the file desciptors you receive from the real filesystem.
+with the file descriptors you receive from the real filesystem.
 
 In short, this is a recipe for buggy tests or worse - truly destructive
 behavior. If you have a need for a real file, we suggest [File::Temp](https://metacpan.org/pod/File%3A%3ATemp).
