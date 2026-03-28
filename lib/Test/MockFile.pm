@@ -2820,7 +2820,7 @@ sub _io_file_mock_open {
             $need |= 2 if $rw =~ /w/;
             if ( !_check_perms( $mock_file, $need ) ) {
                 $! = EACCES;
-                _throw_autodie( 'open', @_ ) if _caller_has_autodie_for('open');
+                _maybe_throw_autodie( 'open', @_ );
                 return undef;
             }
         }
@@ -2828,7 +2828,7 @@ sub _io_file_mock_open {
             # Creating new file: check parent dir write+execute
             if ( !_check_parent_perms( $abs_path, 2 | 1 ) ) {
                 $! = EACCES;
-                _throw_autodie( 'open', @_ ) if _caller_has_autodie_for('open');
+                _maybe_throw_autodie( 'open', @_ );
                 return undef;
             }
         }
@@ -3156,14 +3156,14 @@ sub __open (*;$@) {
             $need |= 2 if $rw =~ /w/;
             if ( !_check_perms( $mock_file, $need ) ) {
                 $! = EACCES;
-                _throw_autodie( 'open', @_ ) if _caller_has_autodie_for('open');
+                _maybe_throw_autodie( 'open', @_ );
                 return undef;
             }
         }
         elsif ( $rw =~ /w/ ) {
             if ( !_check_parent_perms( $abs_path, 2 | 1 ) ) {
                 $! = EACCES;
-                _throw_autodie( 'open', @_ ) if _caller_has_autodie_for('open');
+                _maybe_throw_autodie( 'open', @_ );
                 return undef;
             }
         }
@@ -3360,14 +3360,14 @@ sub __sysopen (*$$;$) {
             $need |= 2 if $rw =~ /w/;
             if ( !_check_perms( $mock_file, $need ) ) {
                 $! = EACCES;
-                _throw_autodie( 'sysopen', @_ ) if _caller_has_autodie_for('sysopen');
+                _maybe_throw_autodie( 'sysopen', @_ );
                 return undef;
             }
         }
         elsif ( $rw =~ /w/ ) {
             if ( !_check_parent_perms( $mock_file->{'path'}, 2 | 1 ) ) {
                 $! = EACCES;
-                _throw_autodie( 'sysopen', @_ ) if _caller_has_autodie_for('sysopen');
+                _maybe_throw_autodie( 'sysopen', @_ );
                 return undef;
             }
         }
@@ -3445,7 +3445,7 @@ sub __opendir (*$) {
     # Permission check: opendir needs read permission on directory (GH #3)
     if ( defined $_mock_uid && !_check_perms( $mock_dir, 4 ) ) {
         $! = EACCES;
-        _throw_autodie( 'opendir', @_ ) if _caller_has_autodie_for('opendir');
+        _maybe_throw_autodie( 'opendir', @_ );
         return undef;
     }
 
@@ -3799,7 +3799,7 @@ sub __link ($$) {
         }
         if ( $target_path eq CIRCULAR_SYMLINK ) {
             $! = ELOOP;
-            _throw_autodie( 'link', @_ ) if _caller_has_autodie_for('link');
+            _maybe_throw_autodie( 'link', @_ );
             return 0;
         }
         $source_mock = $files_being_mocked{$target_path};
@@ -3895,7 +3895,7 @@ sub __mkdir (_;$) {
     # Permission check: mkdir needs write+execute on parent dir (GH #3)
     if ( defined $_mock_uid && !_check_parent_perms( $mock->{'path'}, 2 | 1 ) ) {
         $! = EACCES;
-        _throw_autodie( 'mkdir', @_ ) if _caller_has_autodie_for('mkdir');
+        _maybe_throw_autodie( 'mkdir', @_ );
         return 0;
     }
 
@@ -3971,7 +3971,7 @@ sub __rmdir (_) {
     # Permission check: rmdir needs write+execute on parent dir (GH #3)
     if ( defined $_mock_uid && !_check_parent_perms( $mock->{'path'}, 2 | 1 ) ) {
         $! = EACCES;
-        _throw_autodie( 'rmdir', @_ ) if _caller_has_autodie_for('rmdir');
+        _maybe_throw_autodie( 'rmdir', @_ );
         return 0;
     }
 
@@ -4041,7 +4041,7 @@ sub __rename ($$) {
     if ( $mock_old->is_dir && $mock_new->exists && $mock_new->is_dir ) {
         if ( grep { $_->exists } _files_in_dir( $mock_new->{'path'} ) ) {
             $! = ENOTEMPTY;
-            _throw_autodie( 'rename', @_ ) if _caller_has_autodie_for('rename');
+            _maybe_throw_autodie( 'rename', @_ );
             return 0;
         }
     }
@@ -4156,7 +4156,7 @@ sub __chown (@) {
     my $target_gid = $gid == -1 ? $primary_gid : $gid;
 
     my $is_root     = $eff_uid == 0 || $eff_gids =~ /( ^ | \s ) 0 ( \s | $)/xms;
-    my $is_in_group = grep /(^ | \s ) \Q$target_gid\E ( \s | $ )/xms, $eff_gids;
+    my $is_in_group = $eff_gids =~ /( ^ | \s ) \Q$target_gid\E ( \s | $ )/xms;
 
     # Only check permissions once (before the loop), not per-file.
     # -1 means "keep as is" — no permission needed for unchanged fields.
