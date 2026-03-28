@@ -2800,8 +2800,11 @@ sub _io_file_mock_open {
         return;
     }
 
+    # Cache contents() — it's non-trivial for directories (scans %files_being_mocked).
+    my $contents = $mock_file->contents();
+
     # If contents is undef and reading, file doesn't exist
-    if ( !defined $mock_file->contents() && grep { $mode eq $_ } qw/< +</ ) {
+    if ( !defined $contents && grep { $mode eq $_ } qw/< +</ ) {
         $! = ENOENT;
         return;
     }
@@ -2813,7 +2816,7 @@ sub _io_file_mock_open {
 
     # Permission check (GH #3)
     if ( defined $_mock_uid ) {
-        if ( defined $mock_file->contents() ) {
+        if ( defined $contents ) {
             # Existing file: check file permissions
             my $need = 0;
             $need |= 4 if $rw =~ /r/;
@@ -3136,8 +3139,11 @@ sub __open (*;$@) {
         return undef;
     }
 
+    # Cache contents() — it's non-trivial for directories (scans %files_being_mocked).
+    my $contents = $mock_file->contents();
+
     # If contents is undef, we act like the file isn't there.
-    if ( !defined $mock_file->contents() && grep { $mode eq $_ } qw/< +</ ) {
+    if ( !defined $contents && grep { $mode eq $_ } qw/< +</ ) {
         $! = ENOENT;
         _maybe_throw_autodie( 'open', @_ );
         return undef;
@@ -3150,7 +3156,7 @@ sub __open (*;$@) {
 
     # Permission check (GH #3) — IO::File path must match __open
     if ( defined $_mock_uid ) {
-        if ( defined $mock_file->contents() ) {
+        if ( defined $contents ) {
             my $need = 0;
             $need |= 4 if $rw =~ /r/;
             $need |= 2 if $rw =~ /w/;
