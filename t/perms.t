@@ -336,4 +336,26 @@ subtest 'open > on new file checks parent directory perms' => sub {
     } 1000, 1000;
 };
 
+# =========================================================================
+# sysopen O_CREAT on new file checks parent directory perms (GH #329)
+# =========================================================================
+
+subtest 'sysopen O_CREAT on new file checks parent directory perms' => sub {
+    my $parent = Test::MockFile->new_dir( '/perms/sdir', { mode => 0555, uid => 1000, gid => 1000 } );
+    my $child  = Test::MockFile->file('/perms/sdir/newfile');
+
+    with_user {
+        ok( !sysopen( my $fh, '/perms/sdir/newfile', O_WRONLY | O_CREAT ), 'cannot sysopen O_CREAT in read-only parent dir' );
+        is( $! + 0, EACCES, 'sysopen errno is EACCES for restricted parent dir' );
+    } 1000, 1000;
+
+    my $parent2 = Test::MockFile->new_dir( '/perms/sdir2', { mode => 0755, uid => 1000, gid => 1000 } );
+    my $child2  = Test::MockFile->file('/perms/sdir2/newfile2');
+
+    with_user {
+        ok( sysopen( my $fh, '/perms/sdir2/newfile2', O_WRONLY | O_CREAT ), 'can sysopen O_CREAT in writable parent dir' );
+        close $fh if $fh;
+    } 1000, 1000;
+};
+
 done_testing();
