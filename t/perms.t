@@ -336,4 +336,28 @@ subtest 'open > on new file checks parent directory perms' => sub {
     } 1000, 1000;
 };
 
+# =========================================================================
+# sysopen O_CREAT on new file checks parent perms (GH #329)
+# Before the fix, the elsif branch was dead code — O_CREAT populated
+# contents before the perm check, so the parent-dir check never fired.
+# =========================================================================
+
+subtest 'sysopen O_CREAT on new file checks parent directory perms (GH #329)' => sub {
+    my $parent = Test::MockFile->new_dir( '/perms/sdir', { mode => 0555, uid => 1000, gid => 1000 } );
+    my $child  = Test::MockFile->file('/perms/sdir/newfile');
+
+    with_user {
+        ok( !sysopen( my $fh, '/perms/sdir/newfile', O_WRONLY | O_CREAT ), 'sysopen O_CREAT fails in read-only parent dir' );
+        is( $! + 0, EACCES, 'errno is EACCES' );
+    } 1000, 1000;
+
+    my $parent2 = Test::MockFile->new_dir( '/perms/sdir2', { mode => 0755, uid => 1000, gid => 1000 } );
+    my $child2  = Test::MockFile->file('/perms/sdir2/newfile2');
+
+    with_user {
+        ok( sysopen( my $fh, '/perms/sdir2/newfile2', O_WRONLY | O_CREAT ), 'sysopen O_CREAT succeeds in writable parent dir' );
+        close $fh if $fh;
+    } 1000, 1000;
+};
+
 done_testing();
