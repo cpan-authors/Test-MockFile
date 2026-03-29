@@ -18,7 +18,12 @@ use Fcntl qw/SEEK_CUR/;
 
 use Cwd 'abs_path';
 
-use Test2::Harness::Util::IPC qw/run_cmd/;
+BEGIN {
+    # Test2::Harness::Util::IPC was deprecated in favor of Test2::Harness::IPC::Util
+    eval { require Test2::Harness::IPC::Util; Test2::Harness::IPC::Util->import('run_cmd'); 1 }
+      or eval { require Test2::Harness::Util::IPC; Test2::Harness::Util::IPC->import('run_cmd'); 1 }
+      or die "Cannot load Test2::Harness::IPC::Util or Test2::Harness::Util::IPC: $@";
+}
 
 use Exporter 'import';
 our @EXPORT = qw{
