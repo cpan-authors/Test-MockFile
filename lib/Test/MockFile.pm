@@ -783,6 +783,38 @@ sub _check_parent_perms {
     return _check_perms( $parent_mock, $access );
 }
 
+# _check_open_perms($mock_file, $abs_path, $rw, $is_new, $func_name, @caller_args)
+# Consolidated permission check for __open, __sysopen, and _io_file_mock_open.
+# $is_new: true when the file is being created (contents were undef before O_CREAT).
+# Returns 1 if allowed, undef if denied (with $! and autodie set).
+sub _check_open_perms {
+    my ( $mock_file, $abs_path, $rw, $is_new, $func_name, @caller_args ) = @_;
+
+    return 1 unless defined $_mock_uid;
+
+    if ( !$is_new ) {
+        # Existing file: check file permissions
+        my $need = 0;
+        $need |= 4 if $rw =~ /r/;
+        $need |= 2 if $rw =~ /w/;
+        if ( !_check_perms( $mock_file, $need ) ) {
+            $! = EACCES;
+            _maybe_throw_autodie( $func_name, @caller_args );
+            return undef;
+        }
+    }
+    elsif ( $rw =~ /w/ ) {
+        # Creating new file: check parent dir write+execute
+        if ( !_check_parent_perms( $abs_path, 2 | 1 ) ) {
+            $! = EACCES;
+            _maybe_throw_autodie( $func_name, @caller_args );
+            return undef;
+        }
+    }
+
+    return 1;
+}
+
 my @_tmf_callers;
 
 # Packages where autodie was active when T::MF was imported.
@@ -2815,27 +2847,7 @@ sub _io_file_mock_open {
     $rw .= 'a' if grep { $_ eq $mode } qw/>> +>>/;
 
     # Permission check (GH #3)
-    if ( defined $_mock_uid ) {
-        if ( defined $contents ) {
-            # Existing file: check file permissions
-            my $need = 0;
-            $need |= 4 if $rw =~ /r/;
-            $need |= 2 if $rw =~ /w/;
-            if ( !_check_perms( $mock_file, $need ) ) {
-                $! = EACCES;
-                _maybe_throw_autodie( 'open', @_ );
-                return undef;
-            }
-        }
-        elsif ( $rw =~ /w/ ) {
-            # Creating new file: check parent dir write+execute
-            if ( !_check_parent_perms( $abs_path, 2 | 1 ) ) {
-                $! = EACCES;
-                _maybe_throw_autodie( 'open', @_ );
-                return undef;
-            }
-        }
-    }
+    return undef unless _check_open_perms( $mock_file, $abs_path, $rw, !defined $contents, 'open', @_ );
 
     # Tie the existing IO::File glob directly (don't create a new one)
     tie *{$fh}, 'Test::MockFile::FileHandle', $abs_path, $rw;
@@ -3167,25 +3179,7 @@ sub __open (*;$@) {
     $rw .= 'a' if grep { $_ eq $mode } qw/>> +>>/;
 
     # Permission check (GH #3) — IO::File path must match __open
-    if ( defined $_mock_uid ) {
-        if ( defined $contents ) {
-            my $need = 0;
-            $need |= 4 if $rw =~ /r/;
-            $need |= 2 if $rw =~ /w/;
-            if ( !_check_perms( $mock_file, $need ) ) {
-                $! = EACCES;
-                _maybe_throw_autodie( 'open', @_ );
-                return undef;
-            }
-        }
-        elsif ( $rw =~ /w/ ) {
-            if ( !_check_parent_perms( $abs_path, 2 | 1 ) ) {
-                $! = EACCES;
-                _maybe_throw_autodie( 'open', @_ );
-                return undef;
-            }
-        }
-    }
+    return undef unless _check_open_perms( $mock_file, $abs_path, $rw, !defined $contents, 'open', @_ );
 
     my $filefh = IO::File->new;
     tie *{$filefh}, 'Test::MockFile::FileHandle', $abs_path, $rw;
@@ -3319,6 +3313,9 @@ sub __sysopen (*$$;$) {
         return undef;
     }
 
+    # Track whether this is a new file creation before O_CREAT populates contents.
+    my $is_new = !defined $mock_file->{'contents'};
+
     # O_EXCL
     if ( $sysopen_mode & O_EXCL && $sysopen_mode & O_CREAT && defined $mock_file->{'contents'} ) {
         $! = EEXIST;
@@ -3371,25 +3368,7 @@ sub __sysopen (*$$;$) {
     }
 
     # Permission check (GH #3)
-    if ( defined $_mock_uid ) {
-        if ( defined $mock_file->{'contents'} ) {
-            my $need = 0;
-            $need |= 4 if $rw =~ /r/;
-            $need |= 2 if $rw =~ /w/;
-            if ( !_check_perms( $mock_file, $need ) ) {
-                $! = EACCES;
-                _maybe_throw_autodie( 'sysopen', @_ );
-                return undef;
-            }
-        }
-        elsif ( $rw =~ /w/ ) {
-            if ( !_check_parent_perms( $mock_file->{'path'}, 2 | 1 ) ) {
-                $! = EACCES;
-                _maybe_throw_autodie( 'sysopen', @_ );
-                return undef;
-            }
-        }
-    }
+    return undef unless _check_open_perms( $mock_file, $mock_file->{'path'}, $rw, $is_new, 'sysopen', @_ );
 
     $abs_path //= $mock_file->{'path'};
 
